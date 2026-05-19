@@ -69,6 +69,7 @@
 #endif
 
 #include <SDL2/SDL.h>
+#include "tracy/TracyC.h"
 
 extern Vp gViewportFullscreen;
 
@@ -281,6 +282,7 @@ void produce_interpolation_frames_and_delay(void) {
     // make sure to draw at least one frame to prevent the game from freezing completely
     // (including inputs and window events) if the game update duration is greater than 33ms
     do {
+        TracyCZoneN(interp_loop_ctx, "interpolation_render_loop", 1);
         curTime = clock_elapsed_f64();
         ++framesDrawn;
 
@@ -290,11 +292,36 @@ void produce_interpolation_frames_and_delay(void) {
         gFramePercentage = clamp((curTime - sFrameTimeStart) / sFrameTime, 0.f, 1.f);
         gRenderingDelta = delta;
 
-        gfx_start_frame();
-        if (!gSkipInterpolationTitleScreen) { patch_interpolations(delta); }
-        send_display_list(gGfxSPTask);
-        gfx_end_frame_render();
-        gfx_display_frame();
+        {
+            TracyCZoneN(gfx_start_frame_ctx, "gfx_start_frame", 1);
+            gfx_start_frame();
+            TracyCZoneEnd(gfx_start_frame_ctx);
+        }
+
+        if (!gSkipInterpolationTitleScreen) {
+            TracyCZoneN(patch_interpolations_ctx, "patch_interpolations", 1);
+            patch_interpolations(delta);
+            TracyCZoneEnd(patch_interpolations_ctx);
+        }
+
+        {
+            TracyCZoneN(send_display_list_ctx, "send_display_list", 1);
+            send_display_list(gGfxSPTask);
+            TracyCZoneEnd(send_display_list_ctx);
+        }
+
+        {
+            TracyCZoneN(gfx_end_frame_render_ctx, "gfx_end_frame_render", 1);
+            gfx_end_frame_render();
+            TracyCZoneEnd(gfx_end_frame_render_ctx);
+        }
+
+        // send the frame to the screen (should be directly after the delay for good frame pacing)
+        {
+            TracyCZoneN(gfx_display_frame_ctx, "gfx_display_frame", 1);
+            gfx_display_frame();
+            TracyCZoneEnd(gfx_display_frame_ctx);
+        }
 
         // delay if our framerate is capped
         if (shouldDelay) {
@@ -303,12 +330,15 @@ void produce_interpolation_frames_and_delay(void) {
             f64 elapsedTime = now - loopStartTime;
             f64 delay = (expectedTime - elapsedTime);
             if (delay > 0.0) {
+                TracyCZoneN(delay_ctx, "precise_delay", 1);
                 precise_delay_f64(delay);
+                TracyCZoneEnd(delay_ctx);
             }
         }
 
         sDrawnFrames++;
         if (shouldDelay) { numFramesToDraw--; }
+        TracyCZoneEnd(interp_loop_ctx);
     } while ((curTime = clock_elapsed_f64()) < targetTime && numFramesToDraw > 0);
 
     // compute and update the frame rate every second
@@ -380,20 +410,47 @@ void *audio_thread(UNUSED void *arg) {
 }
 
 void produce_one_frame(void) {
-    CTX_EXTENT(CTX_NETWORK, network_update);
+    TracyCZoneN(ctx, "produce_one_frame", 1);
 
-    CTX_EXTENT(CTX_INTERP, patch_interpolations_before);
+    {
+        TracyCZoneN(network_update_ctx, "network_update", 1);
+        CTX_EXTENT(CTX_NETWORK, network_update);
+        TracyCZoneEnd(network_update_ctx);
+    }
 
-    CTX_EXTENT(CTX_GAME_LOOP, game_loop_one_iteration);
+    {
+        TracyCZoneN(patch_interpolations_before_ctx, "patch_interpolations_before", 1);
+        CTX_EXTENT(CTX_INTERP, patch_interpolations_before);
+        TracyCZoneEnd(patch_interpolations_before_ctx);
+    }
 
-    CTX_EXTENT(CTX_SMLUA, smlua_update);
+    {
+        TracyCZoneN(game_loop_one_iteration_ctx, "game_loop_one_iteration", 1);
+        CTX_EXTENT(CTX_GAME_LOOP, game_loop_one_iteration);
+        TracyCZoneEnd(game_loop_one_iteration_ctx);
+    }
+
+    {
+        TracyCZoneN(smlua_update_ctx, "smlua_update", 1);
+        CTX_EXTENT(CTX_SMLUA, smlua_update);
+        TracyCZoneEnd(smlua_update_ctx);
+    }
 
     // If we aren't threaded
     if (gAudioThread.state == INVALID) {
+        TracyCZoneN(buffer_audio_ctx, "buffer_audio", 1);
         CTX_EXTENT(CTX_AUDIO, buffer_audio);
+        TracyCZoneEnd(buffer_audio_ctx);
     }
 
-    CTX_EXTENT(CTX_RENDER, produce_interpolation_frames_and_delay);
+    {
+        TracyCZoneN(produce_interpolation_frames_and_delay_ctx, "produce_interpolation_frames_and_delay", 1);
+        CTX_EXTENT(CTX_RENDER, produce_interpolation_frames_and_delay);
+        TracyCZoneEnd(produce_interpolation_frames_and_delay_ctx);
+    }
+
+    TracyCFrameMark;
+    TracyCZoneEnd(ctx);
 }
 
 // used for rendering 2D scenes fullscreen like the loading or crash screens
